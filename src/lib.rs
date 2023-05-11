@@ -97,6 +97,8 @@ const BRAILLE_POS: [usize; 8] = [7, 6, 5, 2, 4, 1, 3, 0];
 /// );
 /// assert_eq!(bp2b.to_string(), s2b);
 ///
+/// /* Bitwise and, or, xor, not all operate on individual dots. */
+///
 /// let bp2a_and_b = BraillePic::from_func(|(x, y)| x < 6 && y < 4, 12, 8);
 /// assert_eq!(bp2a.clone() & bp2b.clone(), bp2a_and_b);
 /// let s2a_and_b = (
@@ -383,9 +385,10 @@ impl BraillePic {
     /// ```
     pub fn get_char(&self, col: usize, row: usize) -> char {
         char::from_u32(self.get_codepoint(col, row))
-            .expect("should be a valid character because it lands between 0x2800 and 0x28ff")
+            .expect("will be valid codepoint because it lands between 0x2800 and 0x28ff")
     }
 
+    /* Converts a function f: [0, 4] x [0, 2] -> {0, 1} into a u8 data element */
     fn _bools_to_data<F>(func: F) -> u8
     where
         F: Fn((u8, u8)) -> bool,
@@ -400,10 +403,12 @@ impl BraillePic {
         output
     }
 
+    /* Converts a position in the data vector to coordinates in bits */
     fn _pos_to_offset(pos: usize, width: usize) -> (usize, usize) {
         (2 * (pos % width), 4 * (pos / width))
     }
 
+    /* Converts coordinates in bits to a position in the data vector */
     fn _bit_coords_to_data_pos(&self, bit_col: usize, bit_row: usize) -> Option<(usize, usize)> {
         /* output: (position, bit number) (0 is least significant) */
         if bit_col / 2 < self.width && bit_row / 4 < self._char_height() {
@@ -416,6 +421,72 @@ impl BraillePic {
         }
     }
 
+    /* In Unicode, the Braille characters occupy codepoints between 0x2800 and 0x28ff,
+     * inclusive. However, the dot positions are not intuitive:
+     *
+     *  ┌─────────┐
+     *  │ ┌─┐ ┌─┐ │
+     *  │ │1│ │4│ │
+     *  │ └─┘ └─┘ │            Code point for characters:
+     *  │ ┌─┐ ┌─┐ │
+     *  │ │2│ │5│ │   Suppose a[j] = 0 if dot j is not raised or j == 0, 1 if
+     *  │ └─┘ └─┘ │      dot j is raised. Then the code point is:
+     *  │ ┌─┐ ┌─┐ │
+     *  │ │3│ │6│ │       0x2800
+     *  │ └─┘ └─┘ │           + (1..9)
+     *  │ ┌─┐ ┌─┐ │               .map(|j| a[j] as u32 * 2_u32.pow((j - 1) as u32))
+     *  │ │7│ │8│ │               .sum::<u32>()
+     *  │ └─┘ └─┘ │
+     *  └─────────┘
+     *
+     *  The dot numbers come from the Unicode descriptions, e.g.
+     *  e.g. ⢏ is BRAILLE PATTERN DOTS-12348 and is at codepoint
+     *  0x2800 + 0b10001111 = 0x288F.
+     *
+     *  If we relabel the dots by the power of two they contribute to the codepoint,
+     *  i.e. dot j raised means adding 2.pow(j) to the codepoint, we get:
+     *
+     *  ┌─────────┐
+     *  │ ┌─┐ ┌─┐ │
+     *  │ │0│ │3│ │
+     *  │ └─┘ └─┘ │
+     *  │ ┌─┐ ┌─┐ │
+     *  │ │1│ │4│ │
+     *  │ └─┘ └─┘ │
+     *  │ ┌─┐ ┌─┐ │
+     *  │ │2│ │5│ │
+     *  │ └─┘ └─┘ │
+     *  │ ┌─┐ ┌─┐ │
+     *  │ │6│ │7│ │
+     *  │ └─┘ └─┘ │
+     *  └─────────┘
+     *
+     *  (A good reference for this is Wikipedia: https://en.wikipedia.org/wiki/Braille_Patterns )
+     *
+     *  For the data vector, we use this arrangment instead (with the convention in the above
+     *  diagram, i.e. dot j raised means adding 2.pow(j)):
+     *
+     *  ┌─────────┐
+     *  │ ┌─┐ ┌─┐ │
+     *  │ │7│ │6│ │
+     *  │ └─┘ └─┘ │
+     *  │ ┌─┐ ┌─┐ │
+     *  │ │5│ │4│ │
+     *  │ └─┘ └─┘ │
+     *  │ ┌─┐ ┌─┐ │
+     *  │ │3│ │2│ │
+     *  │ └─┘ └─┘ │
+     *  │ ┌─┐ ┌─┐ │
+     *  │ │1│ │0│ │
+     *  │ └─┘ └─┘ │
+     *  └─────────┘
+     *
+     *  e.g. ⢏ has (new labelling) dots 0, 3, 5, 6, and 7 raised, so it would be represented by
+     *  0b11101001 = 0xe9.
+     *
+     *  This function converts between the convention used in the data vector and the Unicode
+     *  codepoints.
+     * */
     fn _raw_braille_remap(raw: u8) -> u32 {
         let mut output: u32 = 0;
         for (k, shift) in BRAILLE_POS.iter().enumerate() {
@@ -424,8 +495,11 @@ impl BraillePic {
         output
     }
 
+    /* Converts from the convention used in the data vector to the Braille character itself */
     fn _raw_to_braille(raw: u8) -> char {
-        char::from_u32(0x2800 + Self::_raw_braille_remap(raw)).expect("should be ok")
+        char::from_u32(0x2800 + Self::_raw_braille_remap(raw)).expect(
+            "will land between 0x2800 and 0x28ff, inclusive, which are all valid codepoints",
+        )
     }
 
     /// Creates a `BraillePic` object from a slice of `u8` values representing the raised dots in
@@ -504,6 +578,59 @@ impl BraillePic {
     ///     s
     /// );
     /// assert_eq!(bp.to_string(), s);
+    ///
+    /// /* Make an image of the Mandelbrot set */
+    ///
+    /// let mandelbrot_bp = BraillePic::from_func(
+    ///     |(col, row)| {
+    ///         let c: (f64, f64) = (
+    ///             // Representing the complex number a + bi as (a, b)
+    ///             3.0 * (col as f64) / 120.0 - 2.0, // viewing window: [-2, 1] x [-1, 1]
+    ///             -2.0 * (row as f64) / 100.0 + 1.0, // 120 bits x 100 bits
+    ///         );
+    ///         let mut z: (f64, f64) = (0.0, 0.0);
+    ///         for _ in 0..500 {
+    ///             z = (z.0 * z.0 - z.1 * z.1 + c.0, 2.0 * z.0 * z.1 + c.1); // z = z**2 + c
+    ///             if z.0 * z.0 + z.1 * z.1 >= 16.0 {
+    ///                 // test bailout condition |z|**2 >= 16
+    ///                 return false;
+    ///             }
+    ///         }
+    ///         true // assume bounded
+    ///     },
+    ///     120,
+    ///     100,
+    /// );
+    ///
+    /// let mandelbrot_s = (
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n".to_owned() +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣶⣶⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⡗⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡀⣀⣠⣬⣿⣯⣤⣀⡀⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢼⣷⣠⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⡀⣴⣤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢙⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢐⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡾⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣶⣠⣤⣧⣤⣀⠀⠀⠀⣽⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⣿⣿⣿⣿⣿⣿⣧⡀⢰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⣿⣿⣿⣿⣿⣿⣿⣿⣷⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⣿⣿⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⢼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⣿⣿⣿⣿⣿⣿⡿⠃⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣗⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⠻⠿⡿⠿⠛⠁⠀⠀⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠁⠀⠀⠀⠀⠀⢙⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢘⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠈⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⡁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢴⣾⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⢿⠷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠁⠀⠐⠋⠛⠻⠿⣿⡿⠿⠛⠋⠙⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣾⣿⣿⣆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢿⣿⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠰⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
+    ///     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"
+    /// ); // Blank spaces are U+2800, not U+0020
+    ///
+    /// assert_eq!(mandelbrot_bp.to_string(), mandelbrot_s);
     /// ```
     pub fn from_func<F>(func: F, bit_width: usize, bit_height: usize) -> Self
     where
@@ -517,8 +644,10 @@ impl BraillePic {
             .collect();
         Self { width, data }
     }
+}
 
-    fn _as_string(&self) -> String {
+impl fmt::Display for BraillePic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut out_str = String::new();
         for (pos, x) in self.data.iter().enumerate() {
             if pos > 0 && pos % self.width == 0 {
@@ -526,13 +655,7 @@ impl BraillePic {
             }
             out_str.push(Self::_raw_to_braille(*x));
         }
-        out_str
-    }
-}
-
-impl fmt::Display for BraillePic {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self._as_string())
+        write!(f, "{}", out_str)
     }
 }
 
