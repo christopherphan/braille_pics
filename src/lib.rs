@@ -920,24 +920,260 @@ mod tests {
         let bp = BraillePic { width: 73, data };
         for row in 0..21 {
             for col in 0..75 {
+                let k = row * 73 + col;
                 assert_eq!(
                     (col, row, bp.get_data(col, row)),
                     (
                         col,
                         row,
-                        if row < 19 && col < 73 {
-                            // inside the bounds
-                            let k = row * 73 + col;
-                            if k < 1377 {
-                                // inside the data vector
-                                u8::try_from((3 * k + 7) % 256)
-                                    .expect("value will be between 0 and 255, inclusive")
-                            } else {
-                                0_u8
-                            }
+                        if row < 19 && col < 73 && k < 1377 {
+                            u8::try_from((3 * k + 7) % 256)
+                                .expect("value will be between 0 and 255, inclusive")
                         } else {
                             0_u8
                         }
+                    )
+                );
+            }
+        }
+    }
+
+    /* testing BraillePic::get_bit() */
+
+    #[test]
+    fn test_get_bit_1() {
+        let data: Vec<u8> = (0..1387_u16)
+            .map(|k| u8::try_from(1 << ((3 * k + 5) % 7)).expect("will fit in 8 bits"))
+            .collect();
+        let bp = BraillePic { width: 73, data };
+
+        for bit_row in 0..76 {
+            for bit_col in 0..146 {
+                // Recover character row, col
+                let row = bit_row / 4;
+                let col = bit_col / 2;
+                let k = row * 73 + col;
+                let bit_row_offset = bit_row % 4;
+                let bit_col_offset = bit_col % 2;
+                let dot_num = (3 - bit_row_offset) * 2 + (1 - bit_col_offset);
+                assert_eq!(
+                    (
+                        bit_col,
+                        bit_row,
+                        col,
+                        row,
+                        k,
+                        dot_num,
+                        (3 * k + 5) % 7,
+                        bp.get_bit(bit_col, bit_row)
+                    ),
+                    (
+                        bit_col,
+                        bit_row,
+                        col,
+                        row,
+                        k,
+                        dot_num,
+                        (3 * k + 5) % 7,
+                        dot_num == (3 * k + 5) % 7
+                    )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_bit_2() {
+        let data: Vec<u8> = (0..1377_u16) // test out of bounds, array falls short
+            .map(|k| u8::try_from(1 << ((3 * k + 5) % 7)).expect("will fit in 8 bits"))
+            .collect();
+        let bp = BraillePic { width: 73, data };
+
+        for bit_row in 0..80 {
+            for bit_col in 0..150 {
+                // Recover character row, col
+                let row = bit_row / 4;
+                let col = bit_col / 2;
+                let k = row * 73 + col;
+                let bit_row_offset = bit_row % 4;
+                let bit_col_offset = bit_col % 2;
+                let dot_num = (3 - bit_row_offset) * 2 + (1 - bit_col_offset);
+                assert_eq!(
+                    (
+                        bit_col,
+                        bit_row,
+                        col,
+                        row,
+                        k,
+                        dot_num,
+                        (3 * k + 5) % 7,
+                        bp.get_bit(bit_col, bit_row)
+                    ),
+                    (
+                        bit_col,
+                        bit_row,
+                        col,
+                        row,
+                        k,
+                        dot_num,
+                        (3 * k + 5) % 7,
+                        row < 19 && col < 73 && k < 1377 && (dot_num == (3 * k + 5) % 7)
+                    )
+                );
+            }
+        }
+    }
+
+    /* testing BraillePic::get_codepoint() */
+
+    #[test]
+    fn test_get_codepoint_1() {
+        let data: Vec<u8> = (0..989)
+            .map(|k| {
+                u8::try_from((9 * k + 5) % 256).expect("value will be between 0 and 255, inclusive")
+            })
+            .collect();
+        let bp = BraillePic { width: 23, data };
+        for row in 0..43 {
+            let bit_row = row * 4;
+            for col in 0..23 {
+                let bit_col = col * 2;
+                assert_eq!(
+                    (col, row, bp.get_codepoint(col, row)),
+                    (
+                        col,
+                        row,
+                        // conversion from the way we store our data and Unicode codepoints
+                        // for braille characters
+                        0x2800
+                            + u32::from(bp.get_bit(bit_col, bit_row))
+                            + (u32::from(bp.get_bit(bit_col, bit_row + 1)) << 1)
+                            + (u32::from(bp.get_bit(bit_col, bit_row + 2)) << 2)
+                            + (u32::from(bp.get_bit(bit_col + 1, bit_row)) << 3)
+                            + (u32::from(bp.get_bit(bit_col + 1, bit_row + 1)) << 4)
+                            + (u32::from(bp.get_bit(bit_col + 1, bit_row + 2)) << 5)
+                            + (u32::from(bp.get_bit(bit_col, bit_row + 3)) << 6)
+                            + (u32::from(bp.get_bit(bit_col + 1, bit_row + 3)) << 7)
+                    )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_codepoint_2() {
+        let data: Vec<u8> = (0..954) // test out of bounds, when array falls short
+            .map(|k| {
+                u8::try_from((9 * k + 5) % 256).expect("value will be between 0 and 255, inclusive")
+            })
+            .collect();
+        let bp = BraillePic { width: 23, data };
+        for row in 0..45 {
+            let bit_row = row * 4;
+            for col in 0..26 {
+                let bit_col = col * 2;
+                assert_eq!(
+                    (col, row, bp.get_codepoint(col, row)),
+                    (
+                        col,
+                        row,
+                        // conversion from the way we store our data and Unicode codepoints
+                        // for braille characters
+                        0x2800
+                            + if row < 43 && col < 23 && row * 23 + col < 954 {
+                                u32::from(bp.get_bit(bit_col, bit_row))
+                                    + (u32::from(bp.get_bit(bit_col, bit_row + 1)) << 1)
+                                    + (u32::from(bp.get_bit(bit_col, bit_row + 2)) << 2)
+                                    + (u32::from(bp.get_bit(bit_col + 1, bit_row)) << 3)
+                                    + (u32::from(bp.get_bit(bit_col + 1, bit_row + 1)) << 4)
+                                    + (u32::from(bp.get_bit(bit_col + 1, bit_row + 2)) << 5)
+                                    + (u32::from(bp.get_bit(bit_col, bit_row + 3)) << 6)
+                                    + (u32::from(bp.get_bit(bit_col + 1, bit_row + 3)) << 7)
+                            } else {
+                                0
+                            }
+                    )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_char_1() {
+        let data: Vec<u8> = (0..989)
+            .map(|k| {
+                u8::try_from((9 * k + 5) % 256).expect("value will be between 0 and 255, inclusive")
+            })
+            .collect();
+        let bp = BraillePic { width: 23, data };
+        for row in 0..43 {
+            let bit_row = row * 4;
+            for col in 0..23 {
+                let bit_col = col * 2;
+                assert_eq!(
+                    (col, row, bp.get_char(col, row)),
+                    (
+                        col,
+                        row,
+                        // conversion from the way we store our data and Unicode codepoints
+                        // for braille characters
+                        char::try_from(
+                            0x2800
+                                + u32::from(bp.get_bit(bit_col, bit_row))
+                                + (u32::from(bp.get_bit(bit_col, bit_row + 1)) << 1)
+                                + (u32::from(bp.get_bit(bit_col, bit_row + 2)) << 2)
+                                + (u32::from(bp.get_bit(bit_col + 1, bit_row)) << 3)
+                                + (u32::from(bp.get_bit(bit_col + 1, bit_row + 1)) << 4)
+                                + (u32::from(bp.get_bit(bit_col + 1, bit_row + 2)) << 5)
+                                + (u32::from(bp.get_bit(bit_col, bit_row + 3)) << 6)
+                                + (u32::from(bp.get_bit(bit_col + 1, bit_row + 3)) << 7)
+                        )
+                        .expect(
+                            "between 0x2800 and 0x28FF inclusive, which are all valid codepoints"
+                        )
+                    )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_char_2() {
+        let data: Vec<u8> = (0..954) // test out of bounds, when array falls short
+            .map(|k| {
+                u8::try_from((9 * k + 5) % 256).expect("value will be between 0 and 255, inclusive")
+            })
+            .collect();
+        let bp = BraillePic { width: 23, data };
+        for row in 0..45 {
+            let bit_row = row * 4;
+            for col in 0..26 {
+                let bit_col = col * 2;
+                assert_eq!(
+                    (col, row, bp.get_char(col, row)),
+                    (
+                        col,
+                        row,
+                        // conversion from the way we store our data and Unicode codepoints
+                        // for braille characters
+                        char::try_from(
+                            0x2800
+                                + if row < 43 && col < 23 && row * 23 + col < 954 {
+                                    u32::from(bp.get_bit(bit_col, bit_row))
+                                        + (u32::from(bp.get_bit(bit_col, bit_row + 1)) << 1)
+                                        + (u32::from(bp.get_bit(bit_col, bit_row + 2)) << 2)
+                                        + (u32::from(bp.get_bit(bit_col + 1, bit_row)) << 3)
+                                        + (u32::from(bp.get_bit(bit_col + 1, bit_row + 1)) << 4)
+                                        + (u32::from(bp.get_bit(bit_col + 1, bit_row + 2)) << 5)
+                                        + (u32::from(bp.get_bit(bit_col, bit_row + 3)) << 6)
+                                        + (u32::from(bp.get_bit(bit_col + 1, bit_row + 3)) << 7)
+                                } else {
+                                    0
+                                }
+                        )
+                        .expect(
+                            "between 0x2800 and 0x28FF inclusive, which are all valid codepoints"
+                        )
                     )
                 );
             }
