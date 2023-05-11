@@ -334,7 +334,7 @@ impl BraillePic {
     /// ```
     pub fn get_data(&self, col: usize, row: usize) -> u8 {
         match self._coords_to_data_pos(col, row) {
-            Some(k) => self.data[k],
+            Some(k) => *self.data.get(k).unwrap_or(&0),
             None => 0,
         }
     }
@@ -807,5 +807,140 @@ impl ops::Not for BraillePic {
     fn not(self) -> Self::Output {
         let (bit_width, bit_height) = self.bit_dimensions();
         Self::from_func(|(col, row)| !self.get_bit(col, row), bit_width, bit_height)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /* testing BraillePic::new() */
+
+    #[test]
+    fn test_new_1() {
+        let bp = BraillePic::new(80, 45);
+        assert_eq!(bp.width, 80);
+        assert_eq!(bp.data.len(), 80 * 45);
+        for k in bp.data.iter() {
+            assert_eq!(*k, 0);
+        }
+    }
+
+    #[test]
+    fn test_new_2() {
+        let bp = BraillePic::new(7, 12);
+        for c in bp.to_string().chars() {
+            assert!(c == '\u{2800}' || c == '\n');
+        }
+    }
+
+    /* testing BraillePic::char_dimensions() */
+
+    #[test]
+    fn test_char_dim_1() {
+        let bp = BraillePic {
+            width: 30,
+            data: (0..1500_u16)
+                .map(|k| u8::try_from(k % 256).expect("k % 256 between 0 and 255, inclusive"))
+                .collect(),
+        };
+        assert_eq!(bp.char_dimensions(), (30, 50));
+    }
+
+    #[test]
+    fn test_char_dim_2() {
+        // case where array is not completely full
+        let bp = BraillePic {
+            width: 30,
+            data: (0..1475_u16)
+                .map(|k| u8::try_from(k % 256).expect("k % 256 between 0 and 255, inclusive"))
+                .collect(),
+        };
+        assert_eq!(bp.char_dimensions(), (30, 50));
+    }
+
+    /* testing BraillePic::bit_dimensions() */
+
+    #[test]
+    fn test_bit_dim_1() {
+        let bp = BraillePic {
+            width: 30,
+            data: (0..1500_u16)
+                .map(|k| u8::try_from(k % 256).expect("k % 256 between 0 and 255, inclusive"))
+                .collect(),
+        };
+        assert_eq!(bp.bit_dimensions(), (60, 200));
+    }
+
+    #[test]
+    fn test_bit_dim_2() {
+        // case where array is not completely full
+        let bp = BraillePic {
+            width: 30,
+            data: (0..1475_u16)
+                .map(|k| u8::try_from(k % 256).expect("k % 256 between 0 and 255, inclusive"))
+                .collect(),
+        };
+        assert_eq!(bp.bit_dimensions(), (60, 200));
+    }
+
+    /* testing BraillePic::get_data() */
+
+    #[test]
+    fn test_get_data_1() {
+        let data: Vec<u8> = (0..1387_u16)
+            .map(|k| {
+                u8::try_from((3 * k + 7) % 256).expect("value will be between 0 and 255, inclusive")
+            })
+            .collect();
+        let bp = BraillePic { width: 73, data };
+        for row in 0..19 {
+            for col in 0..73 {
+                assert_eq!(
+                    (col, row, bp.get_data(col, row)),
+                    (
+                        col,
+                        row,
+                        u8::try_from((3 * (row * 73 + col) + 7) % 256)
+                            .expect("value will be between 0 and 255, inclusive")
+                    )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_data_2() {
+        // test if returns correct value outside the bounds or where the array is short
+        let data: Vec<u8> = (0..1377_u16)
+            .map(|k| {
+                u8::try_from((3 * k + 7) % 256).expect("value will be between 0 and 255, inclusive")
+            })
+            .collect();
+        let bp = BraillePic { width: 73, data };
+        for row in 0..21 {
+            for col in 0..75 {
+                assert_eq!(
+                    (col, row, bp.get_data(col, row)),
+                    (
+                        col,
+                        row,
+                        if row < 19 && col < 73 {
+                            // inside the bounds
+                            let k = row * 73 + col;
+                            if k < 1377 {
+                                // inside the data vector
+                                u8::try_from((3 * k + 7) % 256)
+                                    .expect("value will be between 0 and 255, inclusive")
+                            } else {
+                                0_u8
+                            }
+                        } else {
+                            0_u8
+                        }
+                    )
+                );
+            }
+        }
     }
 }
