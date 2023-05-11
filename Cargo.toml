@@ -1,5 +1,6 @@
 [package]
 name = "braille_pics"
+authors = "Christopher Phan"
 license = "MIT OR Apache-2.0"
 description = "A library for producing text-art pictures using Braille characters"
 version = "0.1.0"

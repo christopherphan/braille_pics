@@ -1,8 +1,9 @@
 // This file is part of braille_pics
-// Copyright 2023, Christopher Phan <https://chrisphan.com>
+// Copyright © 2023, Christopher Phan <https://chrisphan.com>
 //
-// Offered under your choice of MIT or Apache-2.0 licenses
-// (See LICENSE file in root directory of this repository.)
+// Offered under your choice of MIT or Apache-2.0 licenses.
+// (See the files LICENSE-MIT.txt and LICENSE-APACHE-2.0.txt in root directory of this repository.)
+//
 //
 //! # braille_pics
 //!
