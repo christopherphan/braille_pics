@@ -2,6 +2,8 @@
 
 - Author: [Christopher Phan](https://chrisphan.com/)
 - License: MIT or Apache-2.0
+- [`crates.io`](https://crates.io/crates/braille_pics)
+- [Documentation (`docs.rs`)](https://docs.rs/braille_pics/0.1.0/braille_pics/)
 
 ```rust
 use mandelbrot::BraillePic;
